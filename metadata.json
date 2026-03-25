@@ -1,5 +1,5 @@
 {
   "name": "NepDev - Controle Financeiro",
-  "description": "Sistema moderno de controle financeiro pessoal com integração bancária automática (Nubank, Santander, etc) via Pluggy.",
+  "description": "Sistema moderno de controle financeiro pessoal com lançamentos manuais e importação de extratos (CSV/OFX).",
   "requestFramePermissions": []
 }

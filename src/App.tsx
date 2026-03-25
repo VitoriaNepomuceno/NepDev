@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Component } from 'react';
 import { 
   Wallet, 
   ArrowUpCircle, 
@@ -23,6 +23,113 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Papa from 'papaparse';
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut, 
+  onAuthStateChanged,
+  User as FirebaseUser
+} from 'firebase/auth';
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot, 
+  addDoc, 
+  deleteDoc, 
+  doc, 
+  serverTimestamp,
+  getDoc,
+  setDoc
+} from 'firebase/firestore';
+import { auth, db } from './firebase';
+
+// --- Error Handling ---
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+// --- Error Boundary ---
+interface ErrorBoundaryProps {
+  children: React.ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: any;
+}
+
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  public state: ErrorBoundaryState = { hasError: false, error: null };
+
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+
+  render() {
+    const { hasError, error } = this.state;
+    if (hasError) {
+      let message = "Algo deu errado.";
+      try {
+        const parsed = JSON.parse(error.message);
+        if (parsed.error) message = `Erro: ${parsed.error}`;
+      } catch (e) {
+        message = error.message || message;
+      }
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-4">
+          <div className="bg-white p-8 rounded-3xl shadow-xl border border-zinc-100 max-w-md w-full text-center">
+            <AlertCircle className="w-12 h-12 text-rose-600 mx-auto mb-4" />
+            <h2 className="text-xl font-bold text-zinc-900 mb-2">Ops! Ocorreu um erro</h2>
+            <p className="text-zinc-600 mb-6">{message}</p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full py-3 bg-zinc-900 text-white font-bold rounded-xl hover:bg-zinc-800 transition-all"
+            >
+              Recarregar Aplicativo
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return (this as any).props.children;
+  }
+}
 
 // --- Types ---
 interface Transaction {
@@ -47,6 +154,8 @@ interface BankAccount {
 type Page = 'login' | 'register' | 'dashboard';
 
 export default function App() {
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
   const [currentPage, setCurrentPage] = useState<Page>('login');
   const [manualTransactions, setManualTransactions] = useState<Transaction[]>([]);
   const [bankTransactions, setBankTransactions] = useState<Transaction[]>([]);
@@ -54,6 +163,61 @@ export default function App() {
   const [isImporting, setIsImporting] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [registerEmail, setRegisterEmail] = useState('');
+  const [registerPassword, setRegisterPassword] = useState('');
+  const [registerConfirmPassword, setRegisterConfirmPassword] = useState('');
+
+  // Auth Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setUser(user);
+      setIsAuthReady(true);
+      if (user) {
+        setCurrentPage('dashboard');
+      } else {
+        setCurrentPage('login');
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Firestore Sync
+  useEffect(() => {
+    if (!user) {
+      setManualTransactions([]);
+      setBankTransactions([]);
+      return;
+    }
+
+    const q = query(collection(db, 'transactions'), where('userId', '==', user.uid));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const transactions: Transaction[] = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        transactions.push({
+          id: doc.id,
+          description: data.description,
+          amount: data.amount,
+          type: data.type,
+          date: data.date,
+          category: data.category,
+          isBank: data.isBank,
+          bankName: data.bankName,
+        });
+      });
+
+      // Split transactions
+      setManualTransactions(transactions.filter(t => !t.isBank));
+      setBankTransactions(transactions.filter(t => t.isBank));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.GET, 'transactions');
+    });
+
+    return () => unsubscribe();
+  }, [user]);
 
   const months = [
     'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
@@ -72,7 +236,7 @@ export default function App() {
 
   const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file) return;
+    if (!file || !user) return;
 
     setIsImporting(true);
     const reader = new FileReader();
@@ -84,23 +248,26 @@ export default function App() {
         Papa.parse(content, {
           header: true,
           skipEmptyLines: true,
-          complete: (results) => {
-            const importedTransactions = results.data.map((row: any, index) => {
-              const amount = parseFloat(row.amount || row.value || row.valor || '0');
-              return {
-                id: `imported-csv-${Date.now()}-${index}`,
-                description: row.description || row.memo || row.payee || row.descricao || 'Transação Importada',
-                amount: Math.abs(amount),
-                date: row.date || row.dtposted || row.data || new Date().toISOString(),
-                type: amount >= 0 ? 'income' : 'expense',
-                category: 'Outros',
-                isBank: true,
-                bankName: 'Importado (CSV)'
-              };
-            });
-            
-            setBankTransactions(prev => [...prev, ...importedTransactions]);
-            setIsImporting(false);
+          complete: async (results) => {
+            try {
+              for (const row of results.data as any[]) {
+                const amount = parseFloat(row.amount || row.value || row.valor || '0');
+                await addDoc(collection(db, 'transactions'), {
+                  description: row.description || row.memo || row.payee || row.descricao || 'Transação Importada',
+                  amount: Math.abs(amount),
+                  date: row.date || row.dtposted || row.data || new Date().toISOString(),
+                  type: amount >= 0 ? 'income' : 'expense',
+                  category: 'Outros',
+                  isBank: true,
+                  bankName: 'Importado (CSV)',
+                  userId: user.uid,
+                  createdAt: serverTimestamp()
+                });
+              }
+              setIsImporting(false);
+            } catch (err) {
+              handleFirestoreError(err, OperationType.WRITE, 'transactions');
+            }
           },
           error: (err) => {
             console.error('Erro ao processar CSV:', err);
@@ -110,7 +277,6 @@ export default function App() {
         });
       } else if (file.name.endsWith('.ofx')) {
         try {
-          const transactions: any[] = [];
           const stmtrnRegex = /<STMTTRN>([\s\S]*?)<\/STMTTRN>/g;
           let match;
           
@@ -124,23 +290,22 @@ export default function App() {
             const month = dateStr.substring(4, 6);
             const day = dateStr.substring(6, 8);
             
-            transactions.push({
-              id: `imported-ofx-${Date.now()}-${transactions.length}`,
+            await addDoc(collection(db, 'transactions'), {
               description: memo.trim(),
               amount: Math.abs(amount),
               date: `${year}-${month}-${day}`,
               type: amount >= 0 ? 'income' : 'expense',
               category: 'Outros',
               isBank: true,
-              bankName: 'Importado (OFX)'
+              bankName: 'Importado (OFX)',
+              userId: user.uid,
+              createdAt: serverTimestamp()
             });
           }
           
-          setBankTransactions(prev => [...prev, ...transactions]);
           setIsImporting(false);
         } catch (err) {
-          console.error('Erro ao processar OFX:', err);
-          setError('Erro ao processar arquivo OFX.');
+          handleFirestoreError(err, OperationType.WRITE, 'transactions');
           setIsImporting(false);
         }
       }
@@ -152,25 +317,6 @@ export default function App() {
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
   const [type, setType] = useState<'income' | 'expense'>('income');
-
-  // Load data from localStorage on mount
-  useEffect(() => {
-    const savedManual = localStorage.getItem('nepdev_manual_transactions');
-    const savedBank = localStorage.getItem('nepdev_bank_transactions');
-    
-    if (savedManual) setManualTransactions(JSON.parse(savedManual));
-    if (savedBank) setBankTransactions(JSON.parse(savedBank));
-  }, []);
-
-  // Save manual transactions
-  useEffect(() => {
-    localStorage.setItem('nepdev_manual_transactions', JSON.stringify(manualTransactions));
-  }, [manualTransactions]);
-
-  // Save bank transactions (imported)
-  useEffect(() => {
-    localStorage.setItem('nepdev_bank_transactions', JSON.stringify(bankTransactions));
-  }, [bankTransactions]);
 
   // Combine transactions for summary
   const allTransactions = [...manualTransactions, ...bankTransactions];
@@ -194,28 +340,73 @@ export default function App() {
   const totalBalance = allTransactions
     .reduce((acc, t) => acc + (t.type === 'income' ? t.amount : -t.amount), 0);
 
-  const handleAddTransaction = (e: React.FormEvent) => {
+  const handleAddTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!description || !amount) return;
+    if (!description || !amount || !user) return;
 
-    const newTransaction: Transaction = {
-      id: Math.random().toString(36).substr(2, 9),
-      description,
-      amount: parseFloat(amount),
-      type,
-      date: new Date().toLocaleDateString('pt-BR'),
-      category: 'Manual',
-      isBank: false
-    };
+    try {
+      await addDoc(collection(db, 'transactions'), {
+        description,
+        amount: parseFloat(amount),
+        type,
+        date: new Date().toLocaleDateString('pt-BR'),
+        category: 'Manual',
+        isBank: false,
+        userId: user.uid,
+        createdAt: serverTimestamp()
+      });
 
-    setManualTransactions([newTransaction, ...manualTransactions]);
-    setDescription('');
-    setAmount('');
+      setDescription('');
+      setAmount('');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'transactions');
+    }
   };
 
-  const handleDeleteTransaction = (id: string, isBank: boolean) => {
-    if (isBank) return; // Cannot delete bank transactions manually
-    setManualTransactions(manualTransactions.filter(t => t.id !== id));
+  const handleDeleteTransaction = async (id: string, isBank: boolean) => {
+    try {
+      await deleteDoc(doc(db, 'transactions', id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `transactions/${id}`);
+    }
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    try {
+      await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
+    } catch (err: any) {
+      setError('Falha no login. Verifique suas credenciais.');
+    }
+  };
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (registerPassword !== registerConfirmPassword) {
+      setError('As senhas não coincidem.');
+      return;
+    }
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, registerEmail, registerPassword);
+      // Create user profile
+      await setDoc(doc(db, 'users', userCredential.user.uid), {
+        name: registerEmail.split('@')[0],
+        email: registerEmail,
+        role: 'user'
+      });
+    } catch (err: any) {
+      setError('Falha ao criar conta. ' + err.message);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.error('Erro ao sair:', err);
+    }
   };
 
   const formatCurrency = (value: number) => {
@@ -243,12 +434,14 @@ export default function App() {
           <p className="text-zinc-500 mt-2">Bem-vindo de volta!</p>
         </div>
 
-        <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); setCurrentPage('dashboard'); }}>
+        <form className="space-y-4" onSubmit={handleLogin}>
           <div className="relative">
             <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400 w-5 h-5" />
             <input 
               type="email" 
               placeholder="Email de Usuário" 
+              value={loginEmail}
+              onChange={(e) => setLoginEmail(e.target.value)}
               className="w-full pl-12 pr-4 py-4 bg-zinc-50 border border-zinc-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-zinc-900 transition-all"
               required
             />
@@ -258,6 +451,8 @@ export default function App() {
             <input 
               type="password" 
               placeholder="Senha" 
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
               className="w-full pl-12 pr-4 py-4 bg-zinc-50 border border-zinc-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-zinc-900 transition-all"
               required
             />
@@ -303,12 +498,14 @@ export default function App() {
           <p className="text-zinc-500 mt-2 text-center">Crie um login para acessar o sistema!</p>
         </div>
 
-        <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); setCurrentPage('login'); }}>
+        <form className="space-y-4" onSubmit={handleRegister}>
           <div className="relative">
             <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400 w-5 h-5" />
             <input 
               type="email" 
               placeholder="Email de Usuário" 
+              value={registerEmail}
+              onChange={(e) => setRegisterEmail(e.target.value)}
               className="w-full pl-12 pr-4 py-4 bg-zinc-50 border border-zinc-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-zinc-900 transition-all"
               required
             />
@@ -318,6 +515,8 @@ export default function App() {
             <input 
               type="password" 
               placeholder="Senha" 
+              value={registerPassword}
+              onChange={(e) => setRegisterPassword(e.target.value)}
               className="w-full pl-12 pr-4 py-4 bg-zinc-50 border border-zinc-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-zinc-900 transition-all"
               required
             />
@@ -327,6 +526,8 @@ export default function App() {
             <input 
               type="password" 
               placeholder="Confirmar Senha" 
+              value={registerConfirmPassword}
+              onChange={(e) => setRegisterConfirmPassword(e.target.value)}
               className="w-full pl-12 pr-4 py-4 bg-zinc-50 border border-zinc-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-zinc-900 transition-all"
               required
             />
@@ -380,7 +581,7 @@ export default function App() {
               />
             </label>
             <button 
-              onClick={() => setCurrentPage('login')}
+              onClick={handleLogout}
               className="flex items-center gap-2 text-zinc-500 hover:text-red-600 font-medium transition-colors"
             >
               <LogOut className="w-5 h-5" />
@@ -663,12 +864,22 @@ export default function App() {
   );
 
   return (
-    <div className="font-sans antialiased text-zinc-900 selection:bg-zinc-900 selection:text-white">
-      <AnimatePresence mode="wait">
-        {currentPage === 'login' && <LoginPage key="login" />}
-        {currentPage === 'register' && <RegisterPage key="register" />}
-        {currentPage === 'dashboard' && <DashboardPage key="dashboard" />}
-      </AnimatePresence>
-    </div>
+    <ErrorBoundary>
+      <div className="font-sans antialiased text-zinc-900 selection:bg-zinc-900 selection:text-white">
+        <AnimatePresence mode="wait">
+          {!isAuthReady ? (
+            <div className="min-h-screen flex items-center justify-center bg-zinc-50">
+              <div className="w-12 h-12 border-4 border-zinc-900 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : (
+            <>
+              {currentPage === 'login' && <LoginPage key="login" />}
+              {currentPage === 'register' && <RegisterPage key="register" />}
+              {currentPage === 'dashboard' && <DashboardPage key="dashboard" />}
+            </>
+          )}
+        </AnimatePresence>
+      </div>
+    </ErrorBoundary>
   );
 }
