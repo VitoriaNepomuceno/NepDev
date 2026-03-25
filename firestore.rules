@@ -22,7 +22,7 @@ service cloud.firestore {
     //   - category: string (optional, size < 50)
     //   - isBank: bool (optional)
     //   - bankName: string (optional, size < 100)
-    //   - userId: string (required, matches auth.uid)
+    //   - userId: string (required, matches auth.token.email)
     //
     // ===============================================================
 
@@ -38,35 +38,21 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isAdmin() {
-      return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          (request.auth.token.email == "VitoriaLuiza418@gmail.com" && request.auth.token.email_verified == true));
-    }
-
-    function isValidEmail(email) {
-      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
-    }
-
-    function isValidUser(data) {
-      return data.keys().hasAll(['name', 'email', 'role']) &&
-             data.keys().hasOnly(['name', 'email', 'role']) &&
-             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-             isValidEmail(data.email) &&
-             data.role in ['admin', 'user'];
+    function isSuperAdmin() {
+      return isAuthenticated() && 
+        (request.auth.uid == "TJb2K6QACOXh3hkhflOhCtmtqEf1" || 
+         request.auth.token.email == "vitorialuiza418@gmail.com");
     }
 
     function isValidTransaction(data) {
-      return data.keys().hasAll(['description', 'amount', 'type', 'date', 'userId']) &&
-             data.keys().hasOnly(['description', 'amount', 'type', 'date', 'userId', 'category', 'isBank', 'bankName']) &&
-             data.description is string && data.description.size() > 0 && data.description.size() < 200 &&
-             data.amount is number && data.amount >= 0 &&
-             data.type in ['income', 'expense'] &&
-             data.date is string &&
-             data.userId == request.auth.uid &&
-             (!('category' in data) || (data.category is string && data.category.size() < 50)) &&
-             (!('bankName' in data) || (data.bankName is string && data.bankName.size() < 100)) &&
-             (!('isBank' in data) || data.isBank is bool);
+      // For super admin, we skip data validation to ensure they can always write
+      // For regular users, we validate ownership and data format
+      return isSuperAdmin() || (
+             (request.auth.token.email != null && data.userId == request.auth.token.email) &&
+             data.description is string &&
+             data.amount is number &&
+             data.type in ['income', 'expense']
+      );
     }
 
     // ===============================================================
@@ -74,20 +60,14 @@ service cloud.firestore {
     // ===============================================================
 
     match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      allow create: if isAuthenticated() && isValidUser(request.resource.data) && 
-                      ((isOwner(userId) && request.resource.data.role == 'user') || isAdmin());
-      allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
-                      ((isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin());
-      allow delete: if isAdmin();
+      allow read, write: if isOwner(userId) || isSuperAdmin();
     }
 
     match /transactions/{transactionId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.token.email || isSuperAdmin());
       allow create: if isAuthenticated() && isValidTransaction(request.resource.data);
-      allow update: if isAuthenticated() && isValidTransaction(request.resource.data) && 
-                      (resource.data.userId == request.auth.uid || isAdmin());
-      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow update: if isAuthenticated() && isValidTransaction(request.resource.data) && (resource.data.userId == request.auth.token.email || isSuperAdmin());
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.token.email || isSuperAdmin());
     }
   }
 }

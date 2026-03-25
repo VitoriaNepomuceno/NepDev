@@ -23,9 +23,10 @@
         "category": { "type": "string" },
         "isBank": { "type": "boolean" },
         "bankName": { "type": "string" },
-        "userId": { "type": "string" }
+        "userId": { "type": "string", "description": "User email address" },
+        "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["description", "amount", "type", "date", "userId"]
+      "required": ["description", "amount", "type", "date", "userId", "createdAt"]
     }
   },
   "firestore": {
