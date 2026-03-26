@@ -978,31 +978,52 @@ export default function App() {
 
                 const finalDescription = getField(row, ['descrição', 'descricao', 'description', 'memo', 'payee']) || 'Transação Importada';
                 const finalDate = getField(row, ['data', 'date', 'dtposted']) || new Date().toISOString();
+                const type = finalAmount >= 0 ? 'income' : 'expense';
+
+                // Unique ID to prevent duplicates
+                const txId = `csv_${user.uid}_${String(finalDate).trim()}_${String(finalDescription).trim().toLowerCase()}_${Math.abs(finalAmount)}_${type}`;
+                const safeTxId = txId.replace(/[\/\s\.]/g, '_').substring(0, 150);
+
+                // Check if already exists
+                const docRef = doc(db, 'transactions', safeTxId);
+                const docSnap = await getDoc(docRef);
+                
+                if (docSnap.exists()) continue;
 
                 // Simple category guessing
                 let guessedCategory = 'Outros';
                 const descLower = String(finalDescription).toLowerCase();
-                if (descLower.includes('uber') || descLower.includes('99app') || descLower.includes('posto') || descLower.includes('combustivel')) {
+                
+                if (descLower.includes('transferencia') || descLower.includes('pix')) {
+                  guessedCategory = 'Transferência';
+                } else if (descLower.includes('fatura') || descLower.includes('boleto')) {
+                  guessedCategory = 'Contas';
+                } else if (descLower.includes('drogaria') || descLower.includes('remedios')) {
+                  guessedCategory = 'Médico';
+                } else if (descLower.includes('rdb')) {
+                  guessedCategory = 'Guardar';
+                } else if (descLower.includes('uber') || descLower.includes('99app') || descLower.includes('posto') || descLower.includes('combustivel')) {
                   guessedCategory = 'Transporte';
                 } else if (descLower.includes('ifood') || descLower.includes('mercado') || descLower.includes('restaurante') || descLower.includes('padaria') || descLower.includes('supermercado')) {
                   guessedCategory = 'Alimentação';
                 } else if (descLower.includes('netflix') || descLower.includes('spotify') || descLower.includes('cinema') || descLower.includes('jogos')) {
                   guessedCategory = 'Lazer';
-                } else if (descLower.includes('farmacia') || descLower.includes('hospital') || descLower.includes('medico') || descLower.includes('drogaria')) {
+                } else if (descLower.includes('farmacia') || descLower.includes('hospital') || descLower.includes('medico')) {
                   guessedCategory = 'Saúde';
                 } else if (descLower.includes('aluguel') || descLower.includes('condominio') || descLower.includes('energia') || descLower.includes('agua') || descLower.includes('internet')) {
                   guessedCategory = 'Moradia';
                 }
 
-                await addDoc(collection(db, 'transactions'), {
+                await setDoc(docRef, {
                   description: String(finalDescription).trim(),
                   amount: Math.abs(finalAmount),
                   date: String(finalDate).trim(),
-                  type: finalAmount >= 0 ? 'income' : 'expense',
+                  type,
                   category: guessedCategory,
                   isBank: true,
                   bankName: 'Importado (CSV)',
                   userId: user.email || 'unknown',
+                  transactionId: safeTxId,
                   createdAt: serverTimestamp()
                 });
               }
@@ -1031,35 +1052,59 @@ export default function App() {
 
             const dateStr = block.match(/<DTPOSTED>(.*)/)?.[1] || '';
             const memo = block.match(/<MEMO>(.*)/)?.[1] || block.match(/<NAME>(.*)/)?.[1] || 'Transação OFX';
+            const fitid = block.match(/<FITID>(.*)/)?.[1] || '';
             
             const year = dateStr.substring(0, 4);
             const month = dateStr.substring(4, 6);
             const day = dateStr.substring(6, 8);
+            const finalDate = `${year}-${month}-${day}`;
+            const type = amount >= 0 ? 'income' : 'expense';
+
+            // Unique ID to prevent duplicates
+            // Prefer FITID if available, otherwise generate one
+            const txId = fitid ? `ofx_${user.uid}_${fitid}` : `ofx_${user.uid}_${finalDate}_${memo.trim().toLowerCase()}_${Math.abs(amount)}_${type}`;
+            const safeTxId = txId.replace(/[\/\s\.]/g, '_').substring(0, 150);
+
+            // Check if already exists
+            const docRef = doc(db, 'transactions', safeTxId);
+            const docSnap = await getDoc(docRef);
             
+            if (docSnap.exists()) continue;
+
             // Simple category guessing
             let guessedCategory = 'Outros';
             const descLower = String(memo).toLowerCase();
-            if (descLower.includes('uber') || descLower.includes('99app') || descLower.includes('posto') || descLower.includes('combustivel')) {
+            
+            if (descLower.includes('transferencia') || descLower.includes('pix')) {
+              guessedCategory = 'Transferência';
+            } else if (descLower.includes('fatura') || descLower.includes('boleto')) {
+              guessedCategory = 'Contas';
+            } else if (descLower.includes('drogaria') || descLower.includes('remedios')) {
+              guessedCategory = 'Médico';
+            } else if (descLower.includes('rdb')) {
+              guessedCategory = 'Guardar';
+            } else if (descLower.includes('uber') || descLower.includes('99app') || descLower.includes('posto') || descLower.includes('combustivel')) {
               guessedCategory = 'Transporte';
             } else if (descLower.includes('ifood') || descLower.includes('mercado') || descLower.includes('restaurante') || descLower.includes('padaria') || descLower.includes('supermercado')) {
               guessedCategory = 'Alimentação';
             } else if (descLower.includes('netflix') || descLower.includes('spotify') || descLower.includes('cinema') || descLower.includes('jogos')) {
               guessedCategory = 'Lazer';
-            } else if (descLower.includes('farmacia') || descLower.includes('hospital') || descLower.includes('medico') || descLower.includes('drogaria')) {
+            } else if (descLower.includes('farmacia') || descLower.includes('hospital') || descLower.includes('medico')) {
               guessedCategory = 'Saúde';
             } else if (descLower.includes('aluguel') || descLower.includes('condominio') || descLower.includes('energia') || descLower.includes('agua') || descLower.includes('internet')) {
               guessedCategory = 'Moradia';
             }
 
-            await addDoc(collection(db, 'transactions'), {
+            await setDoc(docRef, {
               description: memo.trim(),
               amount: Math.abs(amount),
-              date: `${year}-${month}-${day}`,
-              type: amount >= 0 ? 'income' : 'expense',
+              date: finalDate,
+              type,
               category: guessedCategory,
               isBank: true,
               bankName: 'Importado (OFX)',
               userId: user.email || 'unknown',
+              transactionId: safeTxId,
               createdAt: serverTimestamp()
             });
           }
@@ -1089,6 +1134,10 @@ export default function App() {
     'Educação', 
     'Moradia', 
     'Serviços', 
+    'Transferência',
+    'Contas',
+    'Médico',
+    'Guardar',
     'Outros'
   ];
 
