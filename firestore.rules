@@ -41,7 +41,9 @@ service cloud.firestore {
     function isSuperAdmin() {
       return isAuthenticated() && 
         (request.auth.uid == "TJb2K6QACOXh3hkhflOhCtmtqEf1" || 
-         request.auth.token.email == "vitorialuiza418@gmail.com");
+         (request.auth.token.email != null && 
+          (request.auth.token.email.lower() == "vitorialuiza418@gmail.com" ||
+           request.auth.token.email.lower() == "vitorialuiza418@gmail.com")));
     }
 
     function isValidTransaction(data) {
@@ -64,10 +66,11 @@ service cloud.firestore {
     }
 
     match /transactions/{transactionId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.token.email || isSuperAdmin());
+      allow read, write: if isAuthenticated() && (request.auth.uid == "TJb2K6QACOXh3hkhflOhCtmtqEf1" || isSuperAdmin());
+      allow read: if isSuperAdmin() || (isAuthenticated() && resource.data.userId == request.auth.token.email);
       allow create: if isAuthenticated() && isValidTransaction(request.resource.data);
-      allow update: if isAuthenticated() && isValidTransaction(request.resource.data) && (resource.data.userId == request.auth.token.email || isSuperAdmin());
-      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.token.email || isSuperAdmin());
+      allow update: if isSuperAdmin() || (isAuthenticated() && isValidTransaction(request.resource.data) && resource.data.userId == request.auth.token.email);
+      allow delete: if isSuperAdmin() || (isAuthenticated() && resource.data.userId == request.auth.token.email);
     }
   }
 }

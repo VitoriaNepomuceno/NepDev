@@ -19,10 +19,26 @@ import {
   DollarSign,
   AlertCircle,
   FileUp,
-  FileCheck
+  FileCheck,
+  PieChart as PieChartIcon,
+  List as ListIcon,
+  ChevronRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Papa from 'papaparse';
+import { 
+  PieChart, 
+  Pie, 
+  Cell, 
+  ResponsiveContainer, 
+  Tooltip, 
+  Legend,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid
+} from 'recharts';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
@@ -345,6 +361,8 @@ interface DashboardPageProps {
   setAmount: (val: string) => void;
   type: 'income' | 'expense';
   setType: (val: 'income' | 'expense') => void;
+  category: string;
+  setCategory: (val: string) => void;
   handleAddTransaction: (e: React.FormEvent) => void;
   filteredTransactions: Transaction[];
   handleDeleteTransaction: (id: string, isBank: boolean) => void;
@@ -352,7 +370,87 @@ interface DashboardPageProps {
   years: number[];
   formatCurrency: (val: number) => string;
   parseDate: (dateStr: string) => Date;
+  activeTab: 'transactions' | 'analysis';
+  setActiveTab: (val: 'transactions' | 'analysis') => void;
+  categories: string[];
 }
+
+const CategoryAnalysis = ({ transactions, formatCurrency }: { transactions: Transaction[], formatCurrency: (v: number) => string }) => {
+  const expenses = transactions.filter(t => t.type === 'expense');
+  const totalExpense = expenses.reduce((acc, t) => acc + t.amount, 0);
+  
+  const categoryTotals = expenses.reduce((acc, t) => {
+    const cat = t.category || 'Outros';
+    acc[cat] = (acc[cat] || 0) + t.amount;
+    return acc;
+  }, {} as Record<string, number>);
+
+  const data = Object.entries(categoryTotals)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value);
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-zinc-900 p-6 rounded-3xl text-white shadow-lg">
+        <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-1">Total de Saídas</p>
+        <h4 className="text-3xl font-bold">{formatCurrency(totalExpense)}</h4>
+      </div>
+
+      <div className="bg-white rounded-3xl border border-zinc-100 shadow-sm overflow-hidden">
+        <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
+          <h4 className="text-sm font-bold text-zinc-900 uppercase tracking-tight">Distribuição de Despesas</h4>
+          <span className="px-3 py-1 bg-zinc-100 text-zinc-500 text-[10px] font-bold rounded-full uppercase">Percentual por Categoria</span>
+        </div>
+        <div className="divide-y divide-zinc-100">
+          {data.map((item, idx) => {
+            const percentage = (item.value / totalExpense) * 100;
+            return (
+              <div key={item.name} className="p-5 flex items-center justify-between hover:bg-zinc-50 transition-colors">
+                <div className="flex items-center gap-4 flex-1">
+                  <div className="w-10 h-10 rounded-xl bg-zinc-100 flex items-center justify-center text-sm font-bold text-zinc-900">
+                    {idx + 1}
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-sm font-bold text-zinc-900">{item.name}</p>
+                      <p className="text-sm font-bold text-zinc-900">{percentage.toFixed(1)}%</p>
+                    </div>
+                    <div className="w-full bg-zinc-100 h-2 rounded-full overflow-hidden">
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: `${percentage}%` }}
+                        transition={{ duration: 0.8, ease: "easeOut" }}
+                        className="h-full bg-zinc-900"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right ml-8 min-w-[100px]">
+                  <p className="text-sm font-bold text-zinc-900">{formatCurrency(item.value)}</p>
+                </div>
+              </div>
+            );
+          })}
+          {data.length === 0 && (
+            <div className="p-20 text-center">
+              <div className="w-16 h-16 bg-zinc-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                <AlertCircle className="w-8 h-8 text-zinc-200" />
+              </div>
+              <p className="text-zinc-400 font-medium">Nenhuma despesa registrada neste período.</p>
+            </div>
+          )}
+        </div>
+      </div>
+      
+      <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+        <p className="text-[10px] text-zinc-400 font-medium leading-relaxed">
+          * Esta análise considera apenas as <strong>saídas (despesas)</strong> do período selecionado. 
+          Entradas e transferências não são contabilizadas aqui para manter o foco no seu consumo.
+        </p>
+      </div>
+    </div>
+  );
+};
 
 const DashboardPage = ({
   handleLogout,
@@ -373,13 +471,18 @@ const DashboardPage = ({
   setAmount,
   type,
   setType,
+  category,
+  setCategory,
   handleAddTransaction,
   filteredTransactions,
   handleDeleteTransaction,
   months,
   years,
   formatCurrency,
-  parseDate
+  parseDate,
+  activeTab,
+  setActiveTab,
+  categories
 }: DashboardPageProps) => (
   <motion.div 
     initial={{ opacity: 0 }}
@@ -555,6 +658,18 @@ const DashboardPage = ({
                   required
                 />
               </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-400 uppercase mb-2">Categoria</label>
+                <select 
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-zinc-900 transition-all text-sm font-medium"
+                >
+                  {categories.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <button 
                   type="button"
@@ -595,94 +710,145 @@ const DashboardPage = ({
         {/* List Section */}
         <div className="lg:col-span-8">
           <div className="bg-white p-8 rounded-3xl shadow-sm border border-zinc-100 min-h-[600px]">
-            <div className="flex items-center justify-between mb-8">
-              <div>
-                <h3 className="text-xl font-bold text-zinc-900">Extrato de {months[selectedMonth]}</h3>
-                <p className="text-sm text-zinc-400 mt-1">Manual + Bancos Conectados</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="px-3 py-1 bg-zinc-100 text-zinc-500 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                  {filteredTransactions.length} itens
-                </span>
-              </div>
+            <div className="flex items-center gap-8 mb-8 border-b border-zinc-100">
+              <button 
+                onClick={() => setActiveTab('transactions')}
+                className={`pb-4 text-sm font-bold transition-all relative ${
+                  activeTab === 'transactions' ? 'text-zinc-900' : 'text-zinc-400 hover:text-zinc-600'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <ListIcon className="w-4 h-4" />
+                  Transações
+                </div>
+                {activeTab === 'transactions' && (
+                  <motion.div layoutId="activeTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-zinc-900" />
+                )}
+              </button>
+              <button 
+                onClick={() => setActiveTab('analysis')}
+                className={`pb-4 text-sm font-bold transition-all relative ${
+                  activeTab === 'analysis' ? 'text-zinc-900' : 'text-zinc-400 hover:text-zinc-600'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <PieChartIcon className="w-4 h-4" />
+                  Análise de Saídas
+                </div>
+                {activeTab === 'analysis' && (
+                  <motion.div layoutId="activeTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-zinc-900" />
+                )}
+              </button>
             </div>
 
-            <div className="space-y-4">
-              <AnimatePresence mode="popLayout">
-                {filteredTransactions.length === 0 ? (
-                  <motion.div 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="flex flex-col items-center justify-center py-20 text-zinc-400"
-                  >
-                    <Wallet className="w-16 h-16 mb-4 opacity-20" />
-                    <p className="text-sm">Nenhuma transação registrada para este mês.</p>
-                  </motion.div>
-                ) : (
-                  filteredTransactions
-                    .sort((a, b) => {
-                      const dateA = parseDate(a.date).getTime();
-                      const dateB = parseDate(b.date).getTime();
-                      return dateB - dateA;
-                    })
-                    .map((t) => (
-                      <motion.div 
-                        key={t.id}
-                        layout
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        exit={{ opacity: 0, scale: 0.95 }}
-                        className="flex items-center justify-between p-5 bg-zinc-50 rounded-2xl border border-zinc-100 hover:border-zinc-200 transition-all group"
-                      >
-                        <div className="flex items-center gap-4">
-                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center shadow-sm ${
-                            t.type === 'income' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'
-                          }`}>
-                            {t.type === 'income' ? <ArrowUpCircle className="w-6 h-6" /> : <ArrowDownCircle className="w-6 h-6" />}
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h4 className="font-bold text-zinc-900">{t.description}</h4>
-                              {t.isBank && (
-                                <span className="px-2 py-0.5 bg-zinc-200 text-zinc-500 rounded-md text-[8px] font-bold uppercase">
-                                  {t.bankName}
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-3 mt-1">
-                              <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">{t.date}</span>
-                              {t.category && (
-                                <span className="text-[10px] text-zinc-400 font-medium bg-white px-2 py-0.5 rounded-full border border-zinc-100">
-                                  {t.category}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-6">
-                          <span className={`font-bold text-lg ${
-                            t.type === 'income' ? 'text-emerald-600' : 'text-rose-600'
-                          }`}>
-                            {t.type === 'income' ? '+' : '-'} {formatCurrency(t.amount)}
-                          </span>
-                          {!t.isBank ? (
-                            <button 
-                              onClick={() => handleDeleteTransaction(t.id, false)}
-                              className="p-2 text-zinc-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+            <AnimatePresence mode="wait">
+              {activeTab === 'transactions' ? (
+                <motion.div 
+                  key="transactions"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                >
+                  <div className="flex items-center justify-between mb-8">
+                    <div>
+                      <h3 className="text-xl font-bold text-zinc-900">Extrato de {months[selectedMonth]}</h3>
+                      <p className="text-sm text-zinc-400 mt-1">Manual + Bancos Conectados</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-3 py-1 bg-zinc-100 text-zinc-500 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                        {filteredTransactions.length} itens
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <AnimatePresence mode="popLayout">
+                      {filteredTransactions.length === 0 ? (
+                        <motion.div 
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          className="flex flex-col items-center justify-center py-20 text-zinc-400"
+                        >
+                          <Wallet className="w-16 h-16 mb-4 opacity-20" />
+                          <p className="text-sm">Nenhuma transação registrada para este mês.</p>
+                        </motion.div>
+                      ) : (
+                        filteredTransactions
+                          .sort((a, b) => {
+                            const dateA = parseDate(a.date).getTime();
+                            const dateB = parseDate(b.date).getTime();
+                            return dateB - dateA;
+                          })
+                          .map((t) => (
+                            <motion.div 
+                              key={t.id}
+                              layout
+                              initial={{ opacity: 0, x: -20 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              exit={{ opacity: 0, scale: 0.95 }}
+                              className="flex items-center justify-between p-5 bg-zinc-50 rounded-2xl border border-zinc-100 hover:border-zinc-200 transition-all group"
                             >
-                              <Trash2 className="w-5 h-5" />
-                            </button>
-                          ) : (
-                            <div className="w-9 h-9 flex items-center justify-center text-zinc-200">
-                              <FileCheck className="w-5 h-5" />
-                            </div>
-                          )}
-                        </div>
-                      </motion.div>
-                    ))
-                )}
-              </AnimatePresence>
-            </div>
+                              <div className="flex items-center gap-4">
+                                <div className={`w-12 h-12 rounded-xl flex items-center justify-center shadow-sm ${
+                                  t.type === 'income' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'
+                                }`}>
+                                  {t.type === 'income' ? <ArrowUpCircle className="w-6 h-6" /> : <ArrowDownCircle className="w-6 h-6" />}
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <h4 className="font-bold text-zinc-900">{t.description}</h4>
+                                    {t.isBank && (
+                                      <span className="px-2 py-0.5 bg-zinc-200 text-zinc-500 rounded-md text-[8px] font-bold uppercase">
+                                        {t.bankName}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-3 mt-1">
+                                    <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">{t.date}</span>
+                                    {t.category && (
+                                      <span className="text-[10px] text-zinc-400 font-medium bg-white px-2 py-0.5 rounded-full border border-zinc-100">
+                                        {t.category}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-6">
+                                <span className={`font-bold text-lg ${
+                                  t.type === 'income' ? 'text-emerald-600' : 'text-rose-600'
+                                }`}>
+                                  {t.type === 'income' ? '+' : '-'} {formatCurrency(t.amount)}
+                                </span>
+                                {!t.isBank ? (
+                                  <button 
+                                    onClick={() => handleDeleteTransaction(t.id, false)}
+                                    className="p-2 text-zinc-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                                  >
+                                    <Trash2 className="w-5 h-5" />
+                                  </button>
+                                ) : (
+                                  <div className="w-9 h-9 flex items-center justify-center text-zinc-200">
+                                    <FileCheck className="w-5 h-5" />
+                                  </div>
+                                )}
+                              </div>
+                            </motion.div>
+                          ))
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </motion.div>
+              ) : (
+                <motion.div 
+                  key="analysis"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                >
+                  <CategoryAnalysis transactions={filteredTransactions} formatCurrency={formatCurrency} />
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </div>
@@ -788,17 +954,52 @@ export default function App() {
           complete: async (results) => {
             try {
               for (const row of results.data as any[]) {
-                const rawAmount = row.amount || row.value || row.valor || '0';
-                const amount = parseFloat(String(rawAmount).replace(',', '.'));
+                // More robust mapping
+                const getField = (row: any, possibleNames: string[]) => {
+                  for (const name of possibleNames) {
+                    if (row[name] !== undefined) return row[name];
+                    // Case insensitive check
+                    const key = Object.keys(row).find(k => k.toLowerCase() === name.toLowerCase());
+                    if (key) return row[key];
+                  }
+                  // Special check for accented characters if not found
+                  if (possibleNames.includes('descrição')) {
+                    const key = Object.keys(row).find(k => k.normalize('NFD').replace(/[\u0300-\u036f]/g, "").toLowerCase() === 'descricao');
+                    if (key) return row[key];
+                  }
+                  return null;
+                };
+
+                const rawAmount = getField(row, ['valor', 'amount', 'value']);
+                if (rawAmount === null) continue;
                 
-                if (isNaN(amount)) continue;
+                const finalAmount = parseFloat(String(rawAmount).replace(',', '.'));
+                if (isNaN(finalAmount)) continue;
+
+                const finalDescription = getField(row, ['descrição', 'descricao', 'description', 'memo', 'payee']) || 'Transação Importada';
+                const finalDate = getField(row, ['data', 'date', 'dtposted']) || new Date().toISOString();
+
+                // Simple category guessing
+                let guessedCategory = 'Outros';
+                const descLower = String(finalDescription).toLowerCase();
+                if (descLower.includes('uber') || descLower.includes('99app') || descLower.includes('posto') || descLower.includes('combustivel')) {
+                  guessedCategory = 'Transporte';
+                } else if (descLower.includes('ifood') || descLower.includes('mercado') || descLower.includes('restaurante') || descLower.includes('padaria') || descLower.includes('supermercado')) {
+                  guessedCategory = 'Alimentação';
+                } else if (descLower.includes('netflix') || descLower.includes('spotify') || descLower.includes('cinema') || descLower.includes('jogos')) {
+                  guessedCategory = 'Lazer';
+                } else if (descLower.includes('farmacia') || descLower.includes('hospital') || descLower.includes('medico') || descLower.includes('drogaria')) {
+                  guessedCategory = 'Saúde';
+                } else if (descLower.includes('aluguel') || descLower.includes('condominio') || descLower.includes('energia') || descLower.includes('agua') || descLower.includes('internet')) {
+                  guessedCategory = 'Moradia';
+                }
 
                 await addDoc(collection(db, 'transactions'), {
-                  description: row.description || row.memo || row.payee || row.descricao || 'Transação Importada',
-                  amount: Math.abs(amount),
-                  date: row.date || row.dtposted || row.data || new Date().toISOString(),
-                  type: amount >= 0 ? 'income' : 'expense',
-                  category: 'Outros',
+                  description: String(finalDescription).trim(),
+                  amount: Math.abs(finalAmount),
+                  date: String(finalDate).trim(),
+                  type: finalAmount >= 0 ? 'income' : 'expense',
+                  category: guessedCategory,
                   isBank: true,
                   bankName: 'Importado (CSV)',
                   userId: user.email || 'unknown',
@@ -835,12 +1036,27 @@ export default function App() {
             const month = dateStr.substring(4, 6);
             const day = dateStr.substring(6, 8);
             
+            // Simple category guessing
+            let guessedCategory = 'Outros';
+            const descLower = String(memo).toLowerCase();
+            if (descLower.includes('uber') || descLower.includes('99app') || descLower.includes('posto') || descLower.includes('combustivel')) {
+              guessedCategory = 'Transporte';
+            } else if (descLower.includes('ifood') || descLower.includes('mercado') || descLower.includes('restaurante') || descLower.includes('padaria') || descLower.includes('supermercado')) {
+              guessedCategory = 'Alimentação';
+            } else if (descLower.includes('netflix') || descLower.includes('spotify') || descLower.includes('cinema') || descLower.includes('jogos')) {
+              guessedCategory = 'Lazer';
+            } else if (descLower.includes('farmacia') || descLower.includes('hospital') || descLower.includes('medico') || descLower.includes('drogaria')) {
+              guessedCategory = 'Saúde';
+            } else if (descLower.includes('aluguel') || descLower.includes('condominio') || descLower.includes('energia') || descLower.includes('agua') || descLower.includes('internet')) {
+              guessedCategory = 'Moradia';
+            }
+
             await addDoc(collection(db, 'transactions'), {
               description: memo.trim(),
               amount: Math.abs(amount),
               date: `${year}-${month}-${day}`,
               type: amount >= 0 ? 'income' : 'expense',
-              category: 'Outros',
+              category: guessedCategory,
               isBank: true,
               bankName: 'Importado (OFX)',
               userId: user.email || 'unknown',
@@ -862,6 +1078,19 @@ export default function App() {
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
   const [type, setType] = useState<'income' | 'expense'>('income');
+  const [category, setCategory] = useState('Outros');
+  const [activeTab, setActiveTab] = useState<'transactions' | 'analysis'>('transactions');
+
+  const categories = [
+    'Alimentação', 
+    'Transporte', 
+    'Lazer', 
+    'Saúde', 
+    'Educação', 
+    'Moradia', 
+    'Serviços', 
+    'Outros'
+  ];
 
   // Combine transactions for summary
   const allTransactions = [...manualTransactions, ...bankTransactions];
@@ -901,7 +1130,7 @@ export default function App() {
         amount: parsedAmount,
         type,
         date: new Date().toLocaleDateString('pt-BR'),
-        category: 'Manual',
+        category,
         isBank: false,
         userId: user.email || 'unknown',
         createdAt: serverTimestamp()
@@ -909,6 +1138,7 @@ export default function App() {
 
       setDescription('');
       setAmount('');
+      setCategory('Outros');
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'transactions');
     }
@@ -1022,6 +1252,8 @@ export default function App() {
                   setAmount={setAmount}
                   type={type}
                   setType={setType}
+                  category={category}
+                  setCategory={setCategory}
                   handleAddTransaction={handleAddTransaction}
                   filteredTransactions={filteredTransactions}
                   handleDeleteTransaction={handleDeleteTransaction}
@@ -1029,6 +1261,9 @@ export default function App() {
                   years={years}
                   formatCurrency={formatCurrency}
                   parseDate={parseDate}
+                  activeTab={activeTab}
+                  setActiveTab={setActiveTab}
+                  categories={categories}
                 />
               )}
             </>
